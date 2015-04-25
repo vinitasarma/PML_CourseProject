@@ -1,0 +1,138 @@
+---
+title: "PRACTICAL MACHINE LEARNING COURSE PROJECT"
+output: html_document
+---
+
+# Project Description 
+
+This aim of this project is to analyse data from devices such as 
+Jawbone, Fitbit etc and quantify how well a particular activity has been performed. The goal is to use data from accelerometers on the belt, forearm, arm and dumbell of 6 participants. 
+
+
+**The Data **
+
+The data for this project is taken from here.
+
+Training Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Test Data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+**Dependencies/Libraries **
+We first load any package required to solve this problem, the one primarily imporatnt being the 'caret' package.
+```{r, echo = TRUE}
+library(caret)
+library(randomForest)
+library(rattle)
+```
+
+# Loading and Preprocessing the Data
+
+```{r}
+traindata<- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), header = TRUE)
+testdata<- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), header = TRUE)
+```
+
+By simply using 'View(traindata)' , we can see that there are many columns with NAs, and some with no data for some observations. The first step is to identify which variables to keep. We can drop the first 7 columns right away because they contain metadata that is not useful for prediction. Set empty cells to NA.
+```{r}
+emptycells<- which(traindata == "", arr.ind= TRUE)
+traindata1<- traindata[8:159]
+traindata1[emptycells]<- NA
+a<- 1:ncol(traindata1)
+traindata1[a]<- sapply(traindata1[a], as.numeric)
+```
+
+Also drop columns that have more than 50% NAs
+```{r}
+naCols<- sapply(traindata1, function(x) {sum(is.na(x))})
+naCols<- naCols/nrow(traindata1)
+dropCols<- names(traindata1[,naCols>0.75])
+traindata1<- traindata1[, !names(traindata1) %in% dropCols]
+```
+
+Drop columns with nearZeroVariance
+```{r}
+nzv<- nearZeroVar(traindata1, saveMetrics = TRUE)
+dropCols<- names(traindata1[,nzv$nzv == TRUE])
+traindata1<- traindata1[, !names(traindata1) %in% dropCols]
+traindata1$classe<- traindata$classe
+str(traindata1)
+```
+
+
+# MODEL BUILDING
+
+Lets split the training data into a training set and a test set. This test set is used for cross validation before we test the model on totally new data.
+
+```{r}
+set.seed(1234)
+inTrain<- createDataPartition(traindata1$classe, p = 0.7, list = FALSE)
+trainSet<- traindata1[inTrain, ]
+testSet<- traindata1[-inTrain, ]
+dim(trainSet)
+```
+
+Use PCA to reduce feature dimension
+```{r}
+pcomps<- preProcess(trainSet[,-51], method = "pca", thresh = 0.95)
+trainNew<- predict(pcomps, trainSet[, -51])
+trainNew$classe<- trainSet$classe
+testNew<- predict(pcomps, testSet[,-51])
+testNew$classe<- testSet$classe
+# FIT MODEL USING RANDOM FORESTS
+modfit<- randomForest(classe ~., data = trainNew)
+predicts<- predict(modfit, testNew[,-51])
+cm<- confusionMatrix(testNew$classe, predicts)
+cm
+```
+
+**cROSS vALIDATION AND OUT OF SAMPLE ERROR RATE **
+
+The existing training set was further divided into train and test sets in the ratio 70:30. The random forest model was built on this subset of the original training set and the predictions were made on this test set to find the out of sample error rate.
+
+Thus we see that we have a model with `r cm$overall["Accuracy"] *100`% accuracy.
+The out of sample error rate is `r 100-cm$overall["Accuracy"]*100` %.
+
+
+**PREDICTIONS FOR REAL TEST SET **
+
+Apply the same preprocessing that we did to the training set. First we discard the same variables that we did in the training set.
+
+```{r}
+trainnames<- names(trainSet)
+testdata<- testdata[, names(testdata) %in% trainnames]
+dim(testdata)
+```
+
+Now we have `r ncol(testdata) ` variables in the test set.
+
+Reduce the number of predictors by applying the principal components derived from the training set.
+
+```{r}
+testTransform<- predict(pcomps, testdata)
+testresult<- predict(modfit, testTransform)
+
+```
+
+This set of test predictions resulted in a 19/20 score or 95%.
+
+**IMPORTANT NOTE **
+When fitting randomForest model, according to theory, the cross validation is done internally. So I do not think there is a need to do an explicit cross validation. However, I have used a separate test set to find the out-of-sample error.
+
+Submitting test results.
+
+```{r}
+answers<- as.character(testresult)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
+```
+
+
+
